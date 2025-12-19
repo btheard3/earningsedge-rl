@@ -3,21 +3,42 @@ from __future__ import annotations
 import os
 import time
 import json
+import argparse
+from datetime import datetime
+
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
 
 from earningsedge_rl.training.make_env import make_env
 
-RUN_DIR = "runs/sprint3_ppo"
+
+def save_meta(out_dir: str, meta: dict):
+    os.makedirs(out_dir, exist_ok=True)
+    meta = dict(meta)
+    meta["timestamp"] = datetime.utcnow().isoformat()
+    with open(os.path.join(out_dir, "train_meta.json"), "w") as f:
+        json.dump(meta, f, indent=2)
+
 
 def main():
-    os.makedirs(RUN_DIR, exist_ok=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--symbols", type=str, default="random")  # "random" or "AAPL,MSFT,..."
+    parser.add_argument("--total-timesteps", type=int, default=200_000)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--out", type=str, default="runs/sprint4_stretchA/seed_0")
+    args = parser.parse_args()
 
-    # vectorized env (1 env to start = faster debugging)
-    env = DummyVecEnv([lambda: Monitor(make_env(seed=42)())])
+    out_dir = args.out
+    os.makedirs(out_dir, exist_ok=True)
 
-    # Conservative, stable PPO defaults
+    # Build env factory. make_env(seed=...) should return a callable that returns an Env.
+    env_fn = make_env(seed=args.seed, symbols=args.symbols)
+    env = DummyVecEnv([lambda: Monitor(env_fn())])
+
+    # Seed the vectorized env too (helps with reproducibility)
+    env.reset()
+
     model = PPO(
         policy="MlpPolicy",
         env=env,
@@ -31,31 +52,29 @@ def main():
         vf_coef=0.5,
         max_grad_norm=0.5,
         verbose=1,
-        tensorboard_log=os.path.join(RUN_DIR, "tb"),
+        seed=args.seed,
+        tensorboard_log=os.path.join(out_dir, "tb"),
     )
 
-    # Keep this small first. If it runs, we scale.
-    total_timesteps = 200_000
-
     t0 = time.time()
-    model.learn(total_timesteps=total_timesteps, tb_log_name="ppo_run")
+    model.learn(total_timesteps=args.total_timesteps, tb_log_name="ppo_run", progress_bar=True)
     t1 = time.time()
 
-    # Save model
-    model_path = os.path.join(RUN_DIR, "ppo_trading_env.zip")
+    model_path = os.path.join(out_dir, "ppo_trading_env.zip")
     model.save(model_path)
 
-    # Save run metadata
     meta = {
-        "total_timesteps": total_timesteps,
+        "seed": args.seed,
+        "symbols": args.symbols,
+        "total_timesteps": args.total_timesteps,
         "elapsed_sec": round(t1 - t0, 2),
         "model_path": model_path,
     }
-    with open(os.path.join(RUN_DIR, "train_meta.json"), "w") as f:
-        json.dump(meta, f, indent=2)
+    save_meta(out_dir, meta)
 
     print("Saved:", model_path)
     print("Meta:", meta)
+
 
 if __name__ == "__main__":
     main()
