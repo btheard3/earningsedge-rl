@@ -1,43 +1,54 @@
 from __future__ import annotations
 
+import argparse
+import json
 import os
 import time
-import json
-import argparse
 from datetime import datetime
 
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import DummyVecEnv
 
 from earningsedge_rl.training.make_env import make_env
-
-
-def save_meta(out_dir: str, meta: dict):
-    os.makedirs(out_dir, exist_ok=True)
-    meta = dict(meta)
-    meta["timestamp"] = datetime.utcnow().isoformat()
-    with open(os.path.join(out_dir, "train_meta.json"), "w") as f:
-        json.dump(meta, f, indent=2)
+from earningsedge_rl.training.universe_split import split_universe, save_split, load_split
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--symbols", type=str, default="random")  # "random" or "AAPL,MSFT,..."
-    parser.add_argument("--total-timesteps", type=int, default=200_000)
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--out", type=str, default="runs/sprint4_stretchA/seed_0")
+    parser.add_argument("--run_dir", default="runs/sprint4_generalization")
+    parser.add_argument("--universe_path", default="data/processed/universe_top200.csv")
+    parser.add_argument("--test_frac", type=float, default=0.2)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--total_timesteps", type=int, default=200_000)
+    parser.add_argument("--max_train", type=int, default=None)
+    parser.add_argument("--max_test", type=int, default=None)
+    parser.add_argument("--split_path", default=None, help="If provided, load split JSON instead of creating one.")
     args = parser.parse_args()
 
-    out_dir = args.out
-    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(args.run_dir, exist_ok=True)
 
-    # Build env factory. make_env(seed=...) should return a callable that returns an Env.
-    env_fn = make_env(seed=args.seed, symbols=args.symbols)
-    env = DummyVecEnv([lambda: Monitor(env_fn())])
+    # 1) split
+    split_path = args.split_path or os.path.join(args.run_dir, "universe_split.json")
+    if args.split_path and os.path.exists(args.split_path):
+        split = load_split(args.split_path)
+    elif os.path.exists(split_path):
+        split = load_split(split_path)
+    else:
+        split = split_universe(
+            universe_path=args.universe_path,
+            test_frac=args.test_frac,
+            seed=args.seed,
+            max_train=args.max_train,
+            max_test=args.max_test,
+        )
+        save_split(split, split_path)
 
-    # Seed the vectorized env too (helps with reproducibility)
-    env.reset()
+    print(f"Train symbols: {len(split.train)} | Test symbols: {len(split.test)}")
+    print(f"Saved split: {split_path}")
+
+    # 2) env: TRAIN ONLY
+    env = DummyVecEnv([lambda: Monitor(make_env(seed=args.seed, symbols=split.train)())])
 
     model = PPO(
         policy="MlpPolicy",
@@ -52,25 +63,29 @@ def main():
         vf_coef=0.5,
         max_grad_norm=0.5,
         verbose=1,
-        seed=args.seed,
-        tensorboard_log=os.path.join(out_dir, "tb"),
+        tensorboard_log=os.path.join(args.run_dir, "tb"),
+        device="auto",
     )
 
     t0 = time.time()
-    model.learn(total_timesteps=args.total_timesteps, tb_log_name="ppo_run", progress_bar=True)
+    model.learn(total_timesteps=args.total_timesteps, tb_log_name="ppo_train")
     t1 = time.time()
 
-    model_path = os.path.join(out_dir, "ppo_trading_env.zip")
+    model_path = os.path.join(args.run_dir, "ppo_trading_env.zip")
     model.save(model_path)
 
     meta = {
-        "seed": args.seed,
-        "symbols": args.symbols,
+        "timestamp": datetime.utcnow().isoformat(),
         "total_timesteps": args.total_timesteps,
         "elapsed_sec": round(t1 - t0, 2),
+        "seed": args.seed,
         "model_path": model_path,
+        "split_path": split_path,
+        "train_symbols_count": len(split.train),
+        "test_symbols_count": len(split.test),
     }
-    save_meta(out_dir, meta)
+    with open(os.path.join(args.run_dir, "train_meta.json"), "w") as f:
+        json.dump(meta, f, indent=2)
 
     print("Saved:", model_path)
     print("Meta:", meta)
