@@ -3,7 +3,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import gymnasium as gym
+import random
 from gymnasium import spaces
+
+_PANEL_CACHE = {}
 
 ACTION_LEVELS = np.array([0.0, 0.25, 0.5, 1.0], dtype=np.float32)
 
@@ -26,26 +29,39 @@ class TradingEnv(gym.Env):
         transaction_cost_bps: float = 5.0,   # 5 bps per exposure change
         dd_penalty: float = 0.10,            # drawdown penalty weight
         seed: int | None = None,
+        symbols: list[str] | None = None,    # <-- NEW (train/test tickers list)
+        symbol: str | None = None,           # <-- NEW (force a single ticker)
     ):
         super().__init__()
 
-        self.panel = pd.read_parquet(panel_path)
+        self.symbols_override = symbols
+        self.symbol_override = symbol
+
+        if panel_path in _PANEL_CACHE:
+            self.panel = _PANEL_CACHE[panel_path]
+        else:
+            self.panel = pd.read_parquet(panel_path)
+        _PANEL_CACHE[panel_path] = self.panel
+
         self.panel = self.panel.sort_values(["symbol", "date"]).reset_index(drop=True)
 
         # Use adj_close canonical name
         if "adj_close" not in self.panel.columns and "close_adjusted" in self.panel.columns:
             self.panel = self.panel.rename(columns={"close_adjusted": "adj_close"})
 
-        # Universe
+        # Universe (default symbol pool)
         uni = pd.read_csv(universe_path)
         self.symbols = uni["symbol"].astype(str).tolist()
 
         # Pre-split by symbol for fast sampling
+        panel_symbols = set(self.panel["symbol"].unique())
+
         self.by_symbol = {
             s: self.panel[self.panel["symbol"] == s].sort_values("date").reset_index(drop=True)
             for s in self.symbols
-            if s in set(self.panel["symbol"].unique())
+            if s in panel_symbols
         }
+
         self.symbols = list(self.by_symbol.keys())
 
         self.episode_len = episode_len
@@ -107,8 +123,16 @@ class TradingEnv(gym.Env):
         if seed is not None:
             self.rng = np.random.default_rng(seed)
 
-        # sample symbol
-        self.sym = self.rng.choice(self.symbols)
+        if self.symbol_override is not None:
+            # force a single ticker (useful for demos / fixed evaluation)
+            self.sym = self.symbol_override
+        elif self.symbols_override is not None:
+            # multi-asset training/eval pool (train/test splits)
+            self.sym = random.choice(self.symbols_override)
+        else:
+            # default: sample from universe (your current behavior)
+            self.sym = self.rng.choice(self.symbols)
+
         self.df = self.by_symbol[self.sym]
 
         # pick a random start with enough history for warmup + episode
@@ -153,7 +177,13 @@ class TradingEnv(gym.Env):
         dd = (self.peak - self.equity) / (self.peak + 1e-12)
 
         # reward = return - drawdown penalty
-        reward = float(port_r - self.dd_penalty * dd)
+        # earnings-aware drawdown penalty
+        eflag = 0.0
+        if self.df is not None and "is_earnings_window" in self.df.columns:
+            eflag = float(self.df["is_earnings_window"].iloc[self.t])
+
+        dd_weight = self.dd_penalty * (3.0 if eflag == 1.0 else 1.0)
+        reward = float(port_r - dd_weight * dd)
 
         # advance time
         self.t += 1
