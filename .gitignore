@@ -9,3 +9,8 @@ data/raw/
 runs/
 ui/node_modules/
 data/processed/
+
+node_modules/
+dist/
+.env
+.DS_Store
