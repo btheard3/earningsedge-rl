@@ -4,17 +4,19 @@ import KpiCard from "../components/KpiCard";
 
 type Row = {
   symbol: string;
-  n_pairs: number; // total evaluated pairs
+  n_pairs: number; // total evaluated pairs for this symbol
   fail_rate: number; // 0..1
+
   mean_delta_eq_vs_buyhold: number;
   mean_dd_improve_vs_buyhold: number;
+
   mean_delta_eq_vs_avoid: number;
   mean_dd_improve_vs_avoid: number;
 };
 
 type EnrichedRow = Row & {
-  total: number;    // alias for n_pairs (safe numeric)
-  failures: number; // derived: round(total * fail_rate)
+  total: number;     // alias of n_pairs
+  failures: number;  // round(fail_rate * total)
 };
 
 const CSV_PATH = "/artifacts/sprint4/symbol_failure_summary.csv";
@@ -24,12 +26,12 @@ function toNum(x: unknown): number {
   return Number.isFinite(n) ? n : NaN;
 }
 
-function pct(x: number, digits = 2) {
+function pct01(x: number, digits = 2): string {
   if (!Number.isFinite(x)) return "—";
   return `${(x * 100).toFixed(digits)}%`;
 }
 
-function fmt(x: number, digits = 4) {
+function fmt(x: number, digits = 4): string {
   if (!Number.isFinite(x)) return "—";
   return x.toFixed(digits);
 }
@@ -52,6 +54,8 @@ export default function ErrorAnalysis() {
         setLoading(true);
         setErr(null);
 
+        // PapaParse with dynamicTyping may already coerce numbers,
+        // but we force conversion so this is stable.
         const raw = await loadCSV<any>(CSV_PATH);
 
         const cleaned: Row[] = (raw ?? [])
@@ -59,8 +63,10 @@ export default function ErrorAnalysis() {
             symbol: String(r.symbol ?? "").trim(),
             n_pairs: toNum(r.n_pairs),
             fail_rate: toNum(r.fail_rate),
+
             mean_delta_eq_vs_buyhold: toNum(r.mean_delta_eq_vs_buyhold),
             mean_dd_improve_vs_buyhold: toNum(r.mean_dd_improve_vs_buyhold),
+
             mean_delta_eq_vs_avoid: toNum(r.mean_delta_eq_vs_avoid),
             mean_dd_improve_vs_avoid: toNum(r.mean_dd_improve_vs_avoid),
           }))
@@ -79,23 +85,22 @@ export default function ErrorAnalysis() {
     };
   }, []);
 
-  // Derived fields (failures + total)
   const enriched: EnrichedRow[] = useMemo(() => {
     return rows.map((r) => {
-      const total = Number.isFinite(r.n_pairs) ? r.n_pairs : 0;
-      const fr = Number.isFinite(r.fail_rate) ? r.fail_rate : 0;
+      const total = Number.isFinite(r.n_pairs) ? r.n_pairs : NaN;
+      const fr = Number.isFinite(r.fail_rate) ? r.fail_rate : NaN;
 
-      // Clamp to [0,1] in case weird values slip in
-      const frClamped = Math.min(1, Math.max(0, fr));
-      const failures = Math.round(frClamped * total);
+      const failures =
+        Number.isFinite(total) && Number.isFinite(fr)
+          ? Math.round(fr * total)
+          : NaN;
 
-      return { ...r, total, failures, fail_rate: frClamped };
+      return { ...r, total, failures };
     });
   }, [rows]);
 
   const filtered: EnrichedRow[] = useMemo(() => {
     const q = query.trim().toUpperCase();
-
     const base = q
       ? enriched.filter((r) => r.symbol.toUpperCase().includes(q))
       : enriched;
@@ -104,11 +109,15 @@ export default function ErrorAnalysis() {
       if (sort === "symbol_asc") return a.symbol.localeCompare(b.symbol);
 
       if (sort === "fail_rate_desc") {
-        return (b.fail_rate ?? 0) - (a.fail_rate ?? 0);
+        const av = Number.isFinite(a.fail_rate) ? a.fail_rate : -Infinity;
+        const bv = Number.isFinite(b.fail_rate) ? b.fail_rate : -Infinity;
+        return bv - av;
       }
 
-      // failures_desc (default)
-      return (b.failures ?? 0) - (a.failures ?? 0);
+      // failures_desc
+      const af = Number.isFinite(a.failures) ? a.failures : -Infinity;
+      const bf = Number.isFinite(b.failures) ? b.failures : -Infinity;
+      return bf - af;
     });
 
     return sortedRows;
@@ -117,21 +126,32 @@ export default function ErrorAnalysis() {
   const kpis = useMemo(() => {
     if (!enriched.length) return null;
 
-    const totalFailures = enriched.reduce((acc, r) => acc + (r.failures ?? 0), 0);
-    const totalPairs = enriched.reduce((acc, r) => acc + (r.total ?? 0), 0);
+    const totalFailures = enriched.reduce((acc, r) => {
+      const f = Number.isFinite(r.failures) ? r.failures : 0;
+      return acc + f;
+    }, 0);
 
-    // Weighted avg fail rate across all symbols
+    const totalPairs = enriched.reduce((acc, r) => {
+      const t = Number.isFinite(r.total) ? r.total : 0;
+      return acc + t;
+    }, 0);
+
+    // IMPORTANT: weighted avg by pairs
     const avgFailRate = totalPairs > 0 ? totalFailures / totalPairs : NaN;
 
-    const worstByFailures = [...enriched].sort((a, b) => (b.failures ?? 0) - (a.failures ?? 0))[0];
-    const worstByRate = [...enriched].sort((a, b) => (b.fail_rate ?? 0) - (a.fail_rate ?? 0))[0];
+    const worstByFailures = [...enriched].sort((a, b) => {
+      const af = Number.isFinite(a.failures) ? a.failures : -Infinity;
+      const bf = Number.isFinite(b.failures) ? b.failures : -Infinity;
+      return bf - af;
+    })[0];
 
-    return {
-      totalFailures,
-      avgFailRate,
-      worstByFailures,
-      worstByRate,
-    };
+    const worstByRate = [...enriched].sort((a, b) => {
+      const av = Number.isFinite(a.fail_rate) ? a.fail_rate : -Infinity;
+      const bv = Number.isFinite(b.fail_rate) ? b.fail_rate : -Infinity;
+      return bv - av;
+    })[0];
+
+    return { totalFailures, avgFailRate, worstByFailures, worstByRate };
   }, [enriched]);
 
   return (
@@ -185,29 +205,19 @@ export default function ErrorAnalysis() {
           <>
             {kpis && (
               <div className="mt-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                <KpiCard
-                  title="Total failures"
-                  value={kpis.totalFailures}
-                  formatter={(v: number) => `${Math.round(v)}`}
-                />
-                <KpiCard
-                  title="Avg failure rate"
-                  value={kpis.avgFailRate}
-                  formatter={(v: number) => pct(v, 2)}
-                />
+                <KpiCard title="Total failures" value={kpis.totalFailures} formatter={(v) => String(Math.round(v))} />
+                <KpiCard title="Avg failure rate" value={kpis.avgFailRate} formatter={(v) => pct01(v, 2)} />
                 <KpiCard
                   title="Worst by failures"
                   policy={kpis.worstByFailures?.symbol ?? "—"}
-                  value={kpis.worstByFailures?.failures ?? NaN}
-                  formatter={(v: number) =>
-                    Number.isFinite(v) ? `${Math.round(v)} failures` : "—"
-                  }
+                  value={Number.isFinite(kpis.worstByFailures?.failures) ? (kpis.worstByFailures!.failures as number) : NaN}
+                  formatter={(v) => (Number.isFinite(v) ? `${Math.round(v)} failures` : "—")}
                 />
                 <KpiCard
                   title="Worst by rate"
                   policy={kpis.worstByRate?.symbol ?? "—"}
                   value={kpis.worstByRate?.fail_rate ?? NaN}
-                  formatter={(v: number) => pct(v, 2)}
+                  formatter={(v) => pct01(v, 2)}
                 />
               </div>
             )}
@@ -242,7 +252,7 @@ export default function ErrorAnalysis() {
                       </td>
 
                       <td className="px-3 py-2 text-right text-slate-300">
-                        {pct(r.fail_rate)}
+                        {pct01(r.fail_rate, 2)}
                       </td>
 
                       <td className="px-3 py-2 text-right text-slate-300">
@@ -267,10 +277,7 @@ export default function ErrorAnalysis() {
 
                   {!filtered.length && (
                     <tr>
-                      <td
-                        className="px-3 py-8 text-center text-slate-500"
-                        colSpan={9}
-                      >
+                      <td className="px-3 py-8 text-center text-slate-500" colSpan={9}>
                         No rows match your filter.
                       </td>
                     </tr>
