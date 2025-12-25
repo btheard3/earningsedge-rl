@@ -8,6 +8,7 @@ type Row = {
   fail_rate: number; // 0..1
   failures?: number; // <-- prefer integer if present
   reason?: string;
+  failure_flags?: string;
 
   mean_delta_eq_vs_buyhold: number;
   mean_dd_improve_vs_buyhold: number;
@@ -59,6 +60,7 @@ export default function ErrorAnalysis() {
             fail_rate: toNum(r.fail_rate),
             failures: r.failures !== undefined ? toNum(r.failures) : undefined,
             reason: r.reason ? String(r.reason) : "",
+            failure_flags: r.failure_flags ? String(r.failure_flags) : "",
 
             mean_delta_eq_vs_buyhold: toNum(r.mean_delta_eq_vs_buyhold),
             mean_dd_improve_vs_buyhold: toNum(r.mean_dd_improve_vs_buyhold),
@@ -242,6 +244,7 @@ export default function ErrorAnalysis() {
                     <th className="px-3 py-2 text-right">Δeq vs avoid</th>
                     <th className="px-3 py-2 text-right">DD improve vs avoid</th>
                     <th className="px-3 py-2 text-left">reason</th>
+                    <th className="px-3 py-2 text-left">flags</th>
                   </tr>
                 </thead>
 
@@ -281,6 +284,9 @@ export default function ErrorAnalysis() {
                       <td className="px-3 py-2 text-slate-400">
                         {r.reason && r.reason.trim().length ? r.reason : "—"}
                       </td>
+                      <td className="px-3 py-2 text-slate-400">
+                        {r.failure_flags && r.failure_flags.trim().length ? r.failure_flags : "—"}
+                      </td>
                     </tr>
                   ))}
 
@@ -288,7 +294,7 @@ export default function ErrorAnalysis() {
                     <tr>
                       <td
                         className="px-3 py-8 text-center text-slate-500"
-                        colSpan={9}
+                        colSpan={10}
                       >
                         No rows match your filter.
                       </td>
