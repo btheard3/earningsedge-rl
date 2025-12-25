@@ -18,6 +18,20 @@ type Row = {
 
 const CSV_PATH = "/artifacts/sprint4/symbol_failure_summary.csv";
 
+function parseFlags(s?: string) {
+  if (!s) return [];
+  // handle pipe format first
+  if (s.includes("|")) return s.split("|").map(x => x.trim()).filter(Boolean);
+
+  // fallback: python list string like "['a', 'b']"
+  return s
+    .replace(/^\s*\[/, "")
+    .replace(/\]\s*$/, "")
+    .split(",")
+    .map(x => x.replace(/['"]/g, "").trim())
+    .filter(Boolean);
+}
+
 function toNum(x: unknown) {
   const n = typeof x === "number" ? x : Number(x);
   return Number.isFinite(n) ? n : NaN;
@@ -95,7 +109,8 @@ export default function ErrorAnalysis() {
             ? Math.round(fr * total)
             : NaN;
 
-      return { ...r, total, failures };
+      return { ...r, total, failures, flagsArr: parseFlags(r.failure_flags) };
+
     });
   }, [rows]);
 
@@ -284,8 +299,14 @@ export default function ErrorAnalysis() {
                       <td className="px-3 py-2 text-slate-400">
                         {r.reason && r.reason.trim().length ? r.reason : "—"}
                       </td>
-                      <td className="px-3 py-2 text-slate-400">
-                        {r.failure_flags && r.failure_flags.trim().length ? r.failure_flags : "—"}
+                      <td className="px-3 py-2">
+                        <div className="flex flex-wrap gap-1">
+                        {(r.flagsArr?.length ? r.flagsArr : []).map((f) => (
+                        <span key={f} className="rounded-lg border border-slate-800 bg-slate-950/40 px-2 py-0.5 text-xs text-slate-300">{f}
+                        </span>
+                 ))}
+                        {!r.flagsArr?.length && <span className="text-slate-500">—</span>}
+                        </div>
                       </td>
                     </tr>
                   ))}
