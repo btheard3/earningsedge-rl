@@ -1,9 +1,9 @@
 symbol,n_pairs,fail_rate,failures,reason,flags,failure_flags,primary_flag,mean_delta_eq_vs_buyhold,mean_dd_improve_vs_buyhold,mean_delta_eq_vs_avoid,mean_dd_improve_vs_avoid
-UAL,2.0,1.0,2.0,,,,,,,,
-MBOT,1.0,1.0,1.0,,,,,,,,
+UAL,2.0,1.0,2.0,Large peak-to-trough drawdown during episode,HARD_DRAWDOWN|LATE_CRASH,HARD_DRAWDOWN|LATE_CRASH,HARD_DRAWDOWN,,,,
+MBOT,1.0,1.0,1.0,Large peak-to-trough drawdown during episode,HARD_DRAWDOWN|LATE_CRASH,HARD_DRAWDOWN|LATE_CRASH,HARD_DRAWDOWN,,,,
 EBAY,2.0,0.0,0.0,,,,,,,,
 PEP,1.0,0.0,0.0,,,,,,,,
 BIDU,1.0,0.0,0.0,,,,,,,,
 BP,1.0,0.0,0.0,,,,,,,,
 LYB,1.0,0.0,0.0,,,,,,,,
-PSHG,1.0,1.0,1.0,,,,,,,,
+PSHG,1.0,1.0,1.0,Large peak-to-trough drawdown during episode,HARD_DRAWDOWN|LATE_CRASH,HARD_DRAWDOWN|LATE_CRASH,HARD_DRAWDOWN,,,,
